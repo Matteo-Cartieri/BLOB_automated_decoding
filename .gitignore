@@ -1,0 +1,6 @@
+data/
+models/
+fine-tuned-model/
+venv/
+results/
+**/__pycache__/
