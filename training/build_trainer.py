@@ -13,6 +13,7 @@ from peft import LoraConfig, get_peft_model, PeftModel
 from preprocessing.preprocess import preprocess_dataset
 
 def build_trainer(model, training_args, train_dataset, eval_dataset, data_collator, tokenizer):
+    """"Builds a Hugging Face Trainer for LoRA fine-tuning."""
     return Trainer(
         model=model,
         args=training_args,
@@ -31,6 +32,7 @@ def load_model(model_name, torch_dtype=torch.bfloat16):
     )
 
 def get_lora_config(args):
+    """Creates a LoRA configuration."""
     return LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
@@ -41,6 +43,7 @@ def get_lora_config(args):
     )
  
 def train(model_name, args, training_args, train_path, eval_path, max_seq_len):
+    """Main training function."""
     set_seed(args.seed)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -50,12 +53,14 @@ def train(model_name, args, training_args, train_path, eval_path, max_seq_len):
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
         
+    # Preprocess datasets
     train_ds=preprocess_dataset(train_path, tokenizer, max_seq_len)
     eval_ds=preprocess_dataset(eval_path, tokenizer, max_seq_len)
 
     model = load_model(model_name)
     model.config.pad_token_id = tokenizer.pad_token_id
 
+    # Prepare LoRA model
     lora_config = get_lora_config(args)
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()

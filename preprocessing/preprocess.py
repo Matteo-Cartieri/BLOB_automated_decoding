@@ -8,29 +8,8 @@ def load_jsonl(filepath):
             data.append(json.loads(line))
     return data
 
-# def apply_chat_template(ex, tokenizer, max_seq_len):
-#     messages = ex["messages"]
-#     full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-#     prompt_messages = messages[:-1]
-#     prompt_text = tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
-
-#     full_enc = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=max_seq_len, return_tensors=None)
-#     prompt_enc = tokenizer(prompt_text, add_special_tokens=False, truncation=True, max_length=max_seq_len, return_tensors=None)
-
-#     input_ids = full_enc["input_ids"]
-#     attention_mask = full_enc["attention_mask"]
-#     labels = input_ids.copy()
-
-#     prompt_len = len(prompt_enc["input_ids"])
-#     for i in range(min(prompt_len, len(labels))):
-#         labels[i] = -100
-
-#     return {
-#         "input_ids": input_ids,
-#         "attention_mask": attention_mask,
-#         "labels": labels,
-#     }
 def apply_chat_template(ex, tokenizer, max_seq_len):
+    """"Apply chat template and tokenize, ensuring the response is not truncated."""
     messages = ex["messages"]
 
     prompt_text = tokenizer.apply_chat_template(
@@ -98,6 +77,7 @@ def filter_by_length(example, max_tokens):
     return len(example["input_ids"]) <= max_tokens
 
 def preprocess_dataset(data_path, tokenizer, max_length):
+    """"Load raw data, apply chat template, and filter by length."""
     raw_data = load_jsonl(data_path)
     print(f"Raw dataset: {len(raw_data)} examples")
     

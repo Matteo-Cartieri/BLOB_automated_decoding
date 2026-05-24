@@ -1,54 +1,38 @@
-from evaluation.evaluate import generate_answer, generate_answer_vllm, load_fine_tuned_model, filter_questions
 from preprocessing.preprocess import load_jsonl
-from openai import OpenAI
-import json
-from transformers import AutoTokenizer
+from evaluation.evaluate import (
+    eval_decoder_synthesis,
+    eval_blob_to_json,
+    eval_format_classification,
+    eval_validation_judgement,
+    eval_refusal
+)
 
-ADAPTER_DIR = "./fine-tuned-model/adapter"
-MODEL_NAME = "./models/Qwen2.5-7B"
-RESULTS_FILE = "./results/qwen_2_5_results.jsonl"
-MAX_SEQ_LEN = 7000
+RESULTS_FILE = "./results/base_qwen_2_5_results.jsonl"
 
-test_data = load_jsonl("./data/lora/test.jsonl")
-#model, tokenizer = load_fine_tuned_model(MODEL_NAME, ADAPTER_DIR)
-tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR, trust_remote_code=False)
-test_data = [q for q in test_data if filter_questions(q, MAX_SEQ_LEN, 512, tokenizer)]
-print(f"Test samples after length filter: {len(test_data)}")
+results = load_jsonl(RESULTS_FILE)
 
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="dummy")
+correct = {"decoder_synthesis": 0, "blob_to_json": 0, "format_classification": 0, "validation_judgement": 0, "refusal": 0}
+total = {"decoder_synthesis": 0, "blob_to_json": 0, "format_classification": 0, "validation_judgement": 0, "refusal": 0}
 
-with open(RESULTS_FILE, "w") as f:
-    for i, question in enumerate(test_data):
-        #answer_str = generate_answer(model, tokenizer, question)
-        answer_str = generate_answer_vllm(question, client)
+for i, answer in enumerate(results):
+    total[answer["task_type"]] += 1
+    if answer["parse_ok"]:
+        if answer["task_type"] == "decoder_synthesis":
+            correct["decoder_synthesis"] += eval_decoder_synthesis(answer)
+        elif answer["task_type"] == "blob_to_json":
+            correct["blob_to_json"] += eval_blob_to_json(answer)
+        elif answer["task_type"] == "format_classification":
+            correct["format_classification"] += eval_format_classification(answer)
+        elif answer["task_type"] == "validation_judgement":
+            correct["validation_judgement"] += eval_validation_judgement(answer)
+        elif answer["task_type"] == "refusal":
+            correct["refusal"] += eval_refusal(answer)
+        else:
+            print(f"Sample {i} - Task: {answer['task_type']} (unknown)")
 
-        try:
-            answer_json = json.loads(answer_str)
-            parse_ok = True
-        except json.JSONDecodeError:
-            answer_json = None
-            parse_ok = False
-
-        record = {
-            "id": question["id"],
-            "task_type": question.get("task_type"),
-            "metadata": question.get("metadata", {}),
-            "expected": json.loads(question["messages"][-1]["content"]),
-            "predicted_str": answer_str,
-            "predicted_json": answer_json,
-            "parse_ok": parse_ok,
-        }
-
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        f.flush()  
-
-        if i % 10 == 0:
-            print(f"[{i}/{len(test_data)}] completed")
-
-
-# for i in range(22,23):
-#     question = test_data[i]
-#     print("Question:", question["messages"][1]["content"][:200], "\n***\n")
-#     answer = generate_answer(model, tokenizer, question)
-#     print("Answer:", answer)
-#     print("-" * 50)
+print("Evaluation Results:")
+for task in total.keys():
+    acc = correct[task] / total[task] if total[task] > 0 else 0
+    print(f"{task}: {correct[task]}/{total[task]} - Accuracy: {acc:.2%}")
+    
+print("Total Accuracy:", sum(correct.values()) / sum(total.values()) if sum(total.values()) > 0 else 0)

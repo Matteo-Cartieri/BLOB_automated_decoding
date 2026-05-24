@@ -23,6 +23,7 @@ def generate_answer(
     top_p = 0.9,           # used only if do_sample=True
     repetition_penalty = 1.05 
 ):
+    """"Generates an answer using the given model and tokenizer."""
     text = build_chat_text(question, tokenizer)
     inputs = tokenizer([text], return_tensors="pt")
     inputs = {k: v.to("cuda") for k, v in inputs.items()}
@@ -47,15 +48,15 @@ def generate_answer(
     raw = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
     return extract_first_json(raw)
 
-def generate_answer_vllm(question, client, max_new_tokens=512):
+def generate_answer_vllm(question, client, model_name, max_new_tokens=512):
+    """Generates an answer using vLLM."""
     messages = question["messages"][:-1]  
     
     response = client.chat.completions.create(
-        model="my-qwen-lora",
+        model=model_name,
         messages=messages,
         max_tokens=max_new_tokens,
         temperature=0.0,  # greedy
-        #repetition_penalty=1.05,
     )
     
     raw = response.choices[0].message.content.strip()
@@ -72,6 +73,7 @@ def load_fine_tuned_model(model_name, adapter_dir, torch_dtype=torch.bfloat16):
         dtype=torch_dtype,
         low_cpu_mem_usage=True,
     )
+    # Load the LoRA adapter and merge it with the base model
     model_ft = PeftModel.from_pretrained(base, adapter_dir)
     model_ft = model_ft.merge_and_unload()
     model_ft = model_ft.to("cuda")
@@ -79,6 +81,7 @@ def load_fine_tuned_model(model_name, adapter_dir, torch_dtype=torch.bfloat16):
     return model_ft, tokenizer
 
 def filter_questions(question, max_len, max_new_tokens, tokenizer):
+    """Filters out questions that would exceed the model's max_input_length when combined with the expected answer."""
     prompt_text = tokenizer.apply_chat_template(
         question["messages"][:-1],  
         tokenize=False,
@@ -88,7 +91,7 @@ def filter_questions(question, max_len, max_new_tokens, tokenizer):
     return len(prompt_ids) + max_new_tokens <= max_len
 
 def extract_first_json(text: str) -> str:
-    """Estrae il primo JSON completo dal testo generato."""
+    """Extracts the first JSON object from the given text."""
     text = text.strip()
     if not text.startswith("{"):
         idx = text.find("{")
@@ -103,9 +106,9 @@ def extract_first_json(text: str) -> str:
         return text
 
 def check_encoding_family(predicted, expected):
-    pred_enc = predicted.get("encoding_family", "").strip().lower()
-    exp_enc = expected.get("encoding_family", "").strip().lower()
-    return 1.0 if pred_enc == exp_enc else 0.0
+    pred_enc = predicted.get("classification", "").strip().lower()
+    exp_enc = expected.get("classification", "").strip().lower()
+    return pred_enc == exp_enc 
 
 def check_expected_fields(predicted, expected):
     pred = set(predicted)
@@ -115,4 +118,33 @@ def check_expected_fields(predicted, expected):
     recall    = len(pred & exp) / len(exp)
     precision = len(pred & exp) / len(pred) if pred else 0.0
     return (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
+def eval_decoder_synthesis(answer):
+    predicted = answer["predicted_json"] or {}
+    expected = answer["expected"] or {}
+    class_score = predicted.get("expected_fields", "") == expected.get("expected_fields", "")
+    encoding_score = check_encoding_family(predicted, expected)
+    return 1.0 if class_score and encoding_score else 0.0
+
+def eval_blob_to_json(answer):
+    predicted = answer["predicted_json"] or {}
+    expected = answer["expected"] or {}
+    return 1.0 if predicted == expected else 0.0
+
+def eval_format_classification(answer):
+    predicted = answer["predicted_json"] or {}
+    expected = answer["expected"] or {}
+    encoding_score = check_encoding_family(predicted, expected)
+    decodable_score =predicted.get("is_decodable", False) == expected.get("is_decodable", False)
+    return 1.0 if encoding_score and decodable_score else 0.0
+
+def eval_validation_judgement(answer):
+    predicted = answer["predicted_json"] or {}
+    expected = answer["expected"] or {}
+    return 1.0 if predicted.get("accept", False) == expected.get("accept", False) else 0.0
+
+def eval_refusal(answer):
+    predicted = answer["predicted_json"] or {}
+    expected = answer["expected"] or {}
+    return 1.0 if predicted.get("is_decodable", False) == expected.get("is_decodable", False) else 0.0
 
