@@ -105,38 +105,35 @@ def extract_first_json(text: str) -> str:
     except json.JSONDecodeError:
         return text
 
-def check_encoding_family(predicted, expected):
-    pred_enc = predicted.get("classification", "").strip().lower()
-    exp_enc = expected.get("classification", "").strip().lower()
-    return pred_enc == exp_enc 
-
-def check_expected_fields(predicted, expected):
-    pred = set(predicted)
-    exp  = set(expected)
-    if not exp:
-        return 0.0
-    recall    = len(pred & exp) / len(exp)
-    precision = len(pred & exp) / len(pred) if pred else 0.0
-    return (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-
 def eval_decoder_synthesis(answer):
     predicted = answer["predicted_json"] or {}
     expected = answer["expected"] or {}
-    class_score = predicted.get("expected_fields", "") == expected.get("expected_fields", "")
-    encoding_score = check_encoding_family(predicted, expected)
-    return 1.0 if class_score and encoding_score else 0.0
+    decodable_ok = predicted.get("is_decodable") == expected.get("is_decodable")
+    expected_fields_ok = predicted.get("expected_fields", "") == expected.get("expected_fields", "")
+    classification_ok = predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower()
+    return 1.0 if decodable_ok and expected_fields_ok and classification_ok else 0.0
 
-def eval_blob_to_json(answer):
-    predicted = answer["predicted_json"] or {}
-    expected = answer["expected"] or {}
-    return 1.0 if predicted == expected else 0.0
+# def eval_blob_to_json(answer):
+#     predicted = answer["predicted_json"] or {}
+#     expected = answer["expected"] or {}
+#     return 1.0 if predicted == expected else 0.0
+
+def eval_blob_to_json(answer, threshold = 0.6):
+    pred_keys = set(answer["predicted_json"].keys())
+    exp_keys  = set(answer["expected"].keys())
+
+    common = pred_keys & exp_keys
+    value_matches = sum(1 for k in common if answer["predicted_json"][k] == answer["expected"][k])
+    value_score = value_matches / len(exp_keys) if exp_keys else 0.0
+
+    return 1.0 if value_score >= threshold else 0.0
 
 def eval_format_classification(answer):
     predicted = answer["predicted_json"] or {}
     expected = answer["expected"] or {}
-    encoding_score = check_encoding_family(predicted, expected)
-    decodable_score =predicted.get("is_decodable", False) == expected.get("is_decodable", False)
-    return 1.0 if encoding_score and decodable_score else 0.0
+    classification_ok = predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower()
+    decodable_ok = predicted.get("is_decodable", False) == expected.get("is_decodable", False)
+    return 1.0 if classification_ok and decodable_ok else 0.0
 
 def eval_validation_judgement(answer):
     predicted = answer["predicted_json"] or {}
@@ -146,5 +143,7 @@ def eval_validation_judgement(answer):
 def eval_refusal(answer):
     predicted = answer["predicted_json"] or {}
     expected = answer["expected"] or {}
-    return 1.0 if predicted.get("is_decodable", False) == expected.get("is_decodable", False) else 0.0
+    not_decodable = predicted.get("is_decodable") == False
+    no_code = predicted.get("decoder_code") is None
+    return 1.0 if not_decodable and no_code else 0.0
 

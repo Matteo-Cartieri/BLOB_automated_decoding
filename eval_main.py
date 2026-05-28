@@ -7,7 +7,7 @@ from evaluation.evaluate import (
     eval_refusal
 )
 
-RESULTS_FILE = "./results/base_qwen_2_5_results.jsonl"
+RESULTS_FILE = "./results/ft_qwen_2_5_results_ood.jsonl"
 
 results = load_jsonl(RESULTS_FILE)
 
