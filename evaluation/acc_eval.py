@@ -5,6 +5,22 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
 )
+import math
+from collections import defaultdict
+
+def load_dataset_samples(jsonl_path: str) -> dict[str, list[dict]]:
+    """Uploads the dataset samples from a JSONL file and returns an index mapping task_id to list of samples."""
+    index = defaultdict(list)
+    with open(jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            sample = json.loads(line)
+            task_id = sample.get("task_id", "")
+            if task_id:
+                index[task_id].append(sample)
+    return dict(index)
 
 def build_chat_text(question, tokenizer):
     message = question["messages"]
@@ -63,14 +79,15 @@ def generate_answer_vllm(question, client, model_name, max_new_tokens=512):
     return extract_first_json(raw)
 
 def load_fine_tuned_model(model_name, adapter_dir, torch_dtype=torch.bfloat16):
+    """Loads the fine-tuned model by merging the LoRA adapter with the base model."""
     tokenizer = AutoTokenizer.from_pretrained(adapter_dir, trust_remote_code=False)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"
+    tokenizer.padding_side = "right"
     base=AutoModelForCausalLM.from_pretrained(
         model_name,
-        #device_map="auto",
-        dtype=torch_dtype,
+        device_map="auto",
+        torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
     )
     # Load the LoRA adapter and merge it with the base model
@@ -105,30 +122,26 @@ def extract_first_json(text: str) -> str:
     except json.JSONDecodeError:
         return text
 
-def eval_decoder_synthesis(answer):
-    predicted = answer["predicted_json"] or {}
-    expected = answer["expected"] or {}
-    decodable_ok = predicted.get("is_decodable") == expected.get("is_decodable")
-    expected_fields_ok = predicted.get("expected_fields", "") == expected.get("expected_fields", "")
-    classification_ok = predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower()
-    return 1.0 if decodable_ok and expected_fields_ok and classification_ok else 0.0
-
-# def eval_blob_to_json(answer):
+# def eval_decoder_synthesis(answer):
 #     predicted = answer["predicted_json"] or {}
 #     expected = answer["expected"] or {}
-#     return 1.0 if predicted == expected else 0.0
+#     decodable_ok = predicted.get("is_decodable") == expected.get("is_decodable")
+#     expected_fields_ok = predicted.get("expected_fields", "") == expected.get("expected_fields", "")
+#     classification_ok = predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower()
+#     return 1.0 if decodable_ok and expected_fields_ok and classification_ok else 0.0
 
-def eval_blob_to_json(answer, threshold = 0.6):
-    pred_keys = set(answer["predicted_json"].keys())
-    exp_keys  = set(answer["expected"].keys())
+# def eval_blob_to_json(answer, threshold = 0.6):
+#     pred_keys = set(answer["predicted_json"].keys())
+#     exp_keys  = set(answer["expected"].keys())
 
-    common = pred_keys & exp_keys
-    value_matches = sum(1 for k in common if answer["predicted_json"][k] == answer["expected"][k])
-    value_score = value_matches / len(exp_keys) if exp_keys else 0.0
+#     common = pred_keys & exp_keys
+#     value_matches = sum(1 for k in common if answer["predicted_json"][k] == answer["expected"][k])
+#     value_score = value_matches / len(exp_keys) if exp_keys else 0.0
 
-    return 1.0 if value_score >= threshold else 0.0
+#     return 1.0 if value_score >= threshold else 0.0
 
 def eval_format_classification(answer):
+    """Evaluates the format classification task by checking if both the predicted classification and decodability match the expected values."""
     predicted = answer["predicted_json"] or {}
     expected = answer["expected"] or {}
     classification_ok = predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower()
@@ -136,11 +149,13 @@ def eval_format_classification(answer):
     return 1.0 if classification_ok and decodable_ok else 0.0
 
 def eval_validation_judgement(answer):
+    """Evaluates the validation judgement task by checking if the predicted accept/reject decision matches the expected one."""
     predicted = answer["predicted_json"] or {}
     expected = answer["expected"] or {}
     return 1.0 if predicted.get("accept", False) == expected.get("accept", False) else 0.0
 
 def eval_refusal(answer):
+    """Evaluates the refusal task by checking if the model correctly identifies non-decodable blobs and doesn't generate code."""
     predicted = answer["predicted_json"] or {}
     expected = answer["expected"] or {}
     not_decodable = predicted.get("is_decodable") == False
