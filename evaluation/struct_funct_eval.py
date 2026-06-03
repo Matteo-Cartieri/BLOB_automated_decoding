@@ -34,7 +34,7 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
         "generalization_score": None,
         "errors":               [],
     }
-    # Checks on metadata and classification
+    # checks on metadata and classification
     eval_report["classification_ok"] = (predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower())
     eval_report["expected_fields_ok"] = lists_are_equal(predicted.get("expected_fields"), expected.get("expected_fields"))
     eval_report["decodable_ok"] = (predicted.get("is_decodable") == expected.get("is_decodable"))
@@ -169,10 +169,8 @@ def run_decoder(code, blob_hex, timeout=10):
     runner_logic = textwrap.dedent(f"""
 import json, sys
 
-# Esecuzione del codice del decoder nel contesto globale
 blob = bytes.fromhex("{blob_hex}")
 
-# Cerca la funzione usando globals() invece di dir()
 fn = None
 for fn_name in ("decode_payload", "decode_blob", "decode"):
     if fn_name in globals():
@@ -180,7 +178,7 @@ for fn_name in ("decode_payload", "decode_blob", "decode"):
         break
 
 if fn is None:
-    print(json.dumps({{"error": "no decode function found"}}))
+    print(json.dumps({{"error": "No decode function found"}}))
     sys.exit(1)
 
 try:
@@ -188,7 +186,6 @@ try:
     if isinstance(result, dict):
         print(json.dumps(result))
     else:
-        # Se non è un dizionario, lo stampiamo come errore o stringa vuota
         print(json.dumps({{"error": f"Decoder returned non-dict type: {{type(result)}}"}}))
 except Exception as e:
     print(json.dumps({{"error": f"Runtime error during decode: {{str(e)}}"}}))

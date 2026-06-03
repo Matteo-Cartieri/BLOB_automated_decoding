@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 TRAIN_DATA_PATH = "./data/lora/train.jsonl"
 VAL_DATA_PATH = "./data/lora/validation.jsonl"
-OUTPUT_DIR = "./fine-tuned-model"
+OUTPUT_DIR = "./fine-tuned-models/fine-tuned-gemma"
 
-MODEL_NAME = "./models/Qwen2.5-7B"
-MAX_SEQ_LEN = 7000
+MODEL_NAME = "./models/gemma-3-4b-it"
+MAX_SEQ_LEN = 7500
 SEED = 42
 
 # LoRA defaults
