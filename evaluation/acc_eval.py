@@ -7,6 +7,14 @@ from transformers import (
 )
 import math
 from collections import defaultdict
+import csv
+
+def save_accuracy_csv(rows, filename):
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["task", "difficulty", "correct", "id"])
+        writer.writeheader()
+        writer.writerows(rows)
+    return
 
 def load_dataset_samples(jsonl_path: str) -> dict[str, list[dict]]:
     """Uploads the dataset samples from a JSONL file and returns an index mapping task_id to list of samples."""

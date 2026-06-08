@@ -3,4 +3,5 @@ models/
 fine-tuned-models/
 venv/
 results/
+eval_reports/
 **/__pycache__/
