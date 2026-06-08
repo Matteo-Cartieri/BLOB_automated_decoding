@@ -32,8 +32,8 @@ Accuratezza: percentuale di risposte corrette rispetto alla ground truth.
 Valutazione strutturale e funzionale: punteggio medio (in scala 0-5) che misura la qualità dell'output generato in base alla correttezza nell'esecuzione del codice, la capacità di generalizzazione su BLOB diversi e la correttezza dei campi.
 | Tipo di task | Test (in-distribution) | Test OOD (out-of-distribution) |
 |---|---|---|
-| Decoder synthesis | 0.94/5 | 0.72/5 |
-| BLOB to JSON | 1.83/5 | 1.72/5 |
+| Decoder synthesis | 0.13/5 | 0.17/5 |
+| BLOB to JSON | 1.02/5 | 0.89/5 |
 
 ### Valutazione (Fine-Tuned Model)
 
@@ -48,7 +48,7 @@ Valutazione strutturale e funzionale:
 | Tipo di task | Test (in-distribution) | Test OOD (out-of-distribution) |
 |---|---|---|
 | Decoder synthesis | 3.7/5 | 3.56/5 |
-| BLOB to JSON | 3.85/5 | 4.23/5 |
+| BLOB to JSON | 4.02/5 | 4.41/5 |
 
 ## Fine-tuning di Gemma3 4B
 
@@ -80,8 +80,8 @@ Accuratezza: percentuale di risposte corrette rispetto alla ground truth.
 Valutazione strutturale e funzionale: punteggio medio (in scala 0-5) che misura la qualità dell'output generato in base alla correttezza nell'esecuzione del codice, la capacità di generalizzazione su BLOB diversi e la correttezza dei campi.
 | Tipo di task | Test (in-distribution) | Test OOD (out-of-distribution) |
 |---|---|---|
-| Decoder synthesis | 0.36/5 | 0.3/5 |
-| BLOB to JSON | 1.94/5 | 1.95/5 |
+| Decoder synthesis | 0.18/5 | 0.06/5 |
+| BLOB to JSON | 0.97/5 | 0.98/5 |
 
 ### Valutazione (Fine-Tuned Model)
 
@@ -96,4 +96,4 @@ Valutazione strutturale e funzionale:
 | Tipo di task | Test (in-distribution) | Test OOD (out-of-distribution) |
 |---|---|---|
 | Decoder synthesis | 3.7/5 | 3.55/5 |
-| BLOB to JSON | 3.93/5 | 3.98/5 |
+| BLOB to JSON | 3.95/5 | 4.00/5 |
