@@ -114,7 +114,7 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
             r = run_decoder(code, sample["blob_hex"])
             if r["success"] and isinstance(r["output"], dict):
                 fs = field_level_score(r["output"], sample["expected_output"])
-                gen_results.append(0.5 * fs["field_f1"] + 0.5 * fs["value_accuracy"])
+                gen_results.append(0.2 * fs["field_f1"] + 0.8 * fs["value_accuracy"])
             else:
                 gen_results.append(0.0)
         gen_score = sum(gen_results) / len(gen_results)
@@ -125,7 +125,7 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
     val_acc = eval_report["field_scores"].get("value_accuracy", 0.0)
     hallucinated = eval_report["field_scores"].get("hallucination_penalty", 0.0)
     meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
-    composite = (0.3 * f1 + 0.3 * val_acc + 0.3 * gen_score + 0.1 * meta_ok) * (1 - hallucinated)
+    composite = (0.05 * f1 + 0.8 * val_acc + 0.05 * gen_score + 0.05 * meta_ok + 0.05 * (1 - hallucinated))
     # composite = (f1 + val_acc) / 2 
     # if eval_report["generalization_score"] < 0.5:
     #     if meta_ok < 0.5 and composite < 0.5:
@@ -282,12 +282,12 @@ def field_level_score(predicted_output, expected_output):
 
     return {
         "field_precision": round(precision, 4),
-        "field_recall":    round(recall, 4),
-        "field_f1":        round(f1, 4),
-        "value_accuracy":  round(value_acc, 4),
-        "hallucination_penalty":  round(hallucination_penalty, 4),
-        "missing_keys":    sorted(exp_keys - pred_keys),
-        "extra_keys":      sorted(pred_keys - exp_keys),
+        "field_recall": round(recall, 4),
+        "field_f1": round(f1, 4),
+        "value_accuracy": round(value_acc, 4),
+        "hallucination_penalty": round(hallucination_penalty, 4),
+        "missing_keys": sorted(exp_keys - pred_keys),
+        "extra_keys": sorted(pred_keys - exp_keys),
     }
 
 
@@ -306,7 +306,7 @@ def mark_blob_to_json(answer, float_tol=1e-4):
     eval_report["field_scores"] = field_level_score(predicted, expected)
     fs = eval_report["field_scores"]
 
-    composite = (0.4 * fs["value_accuracy"] + 0.5 * fs["field_f1"] + 0.1 * (1 - fs["hallucination_penalty"]))
+    composite = (0.8 * fs["value_accuracy"] + 0.1 * fs["field_f1"] + 0.1 * (1 - fs["hallucination_penalty"]))
 
     if composite >= 0.85:
         return make_report(eval_report, mark=5)
