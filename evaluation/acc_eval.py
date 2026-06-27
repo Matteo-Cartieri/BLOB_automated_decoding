@@ -41,7 +41,7 @@ def generate_answer(
     model,
     tokenizer,
     question,
-    max_new_tokens = 512,
+    max_new_tokens,
     do_sample = False,      # False = deterministic (greedy)
     temperature = 0.7,     # used only if do_sample=True
     top_p = 0.9,           # used only if do_sample=True
@@ -129,24 +129,6 @@ def extract_first_json(text: str) -> str:
         return json.dumps(parsed, indent=2, ensure_ascii=False)
     except json.JSONDecodeError:
         return text
-
-# def eval_decoder_synthesis(answer):
-#     predicted = answer["predicted_json"] or {}
-#     expected = answer["expected"] or {}
-#     decodable_ok = predicted.get("is_decodable") == expected.get("is_decodable")
-#     expected_fields_ok = predicted.get("expected_fields", "") == expected.get("expected_fields", "")
-#     classification_ok = predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower()
-#     return 1.0 if decodable_ok and expected_fields_ok and classification_ok else 0.0
-
-# def eval_blob_to_json(answer, threshold = 0.6):
-#     pred_keys = set(answer["predicted_json"].keys())
-#     exp_keys  = set(answer["expected"].keys())
-
-#     common = pred_keys & exp_keys
-#     value_matches = sum(1 for k in common if answer["predicted_json"][k] == answer["expected"][k])
-#     value_score = value_matches / len(exp_keys) if exp_keys else 0.0
-
-#     return 1.0 if value_score >= threshold else 0.0
 
 def eval_format_classification(answer):
     """Evaluates the format classification task by checking if both the predicted classification and decodability match the expected values."""

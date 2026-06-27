@@ -19,7 +19,64 @@ def save_report_csv(rows, filename):
             writer.writerow(serialized)
     return
 
-def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_output):
+def load_ontology(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+def build_reverse_index(ontology):
+    """
+    Builds a reverse index mapping each synonym to its canonical field name and weight.
+    """
+    index = {}
+    for canonical, entry in ontology.items():
+        index[canonical] = (canonical, 1.0)
+        for synonym, weight in zip(entry["synonyms"], entry["weights"]):
+            if synonym not in index or index[synonym][1] < weight:
+                index[synonym] = (canonical, weight)
+    return index
+
+def mark_decoder_synthesis_undecodable(answer):
+    predicted = answer.get("predicted_json") or {}
+    expected  = answer.get("expected") or {}
+
+    eval_report = {
+        "classification_ok":    False,
+        "expected_fields":      0.0,
+        "errors":               [],
+        "mark":                 0,
+    }
+    if not answer.get("parse_ok", False):
+        return make_report(eval_report, mark=0)
+    
+    # checks on metadata and classification
+    eval_report["classification_ok"] = (predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower())
+    eval_report["expected_fields"] = lists_similarity(predicted.get("expected_fields", []), expected.get("expected_fields", []))
+    
+    eval_report["decodable_ok"] = (predicted.get("is_decodable") == expected.get("is_decodable"))
+
+    code = predicted.get("decoder_code", "")
+    if expected.get("is_decodable") is False:
+        # if the expected sample is not decodable, check if the model identified it as non-decodable and predicted the expected fields
+        if predicted.get("is_decodable") is False and not code:
+            meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
+            if meta_ok >= 0.85:
+                return make_report(eval_report, mark=5)
+            elif meta_ok >= 0.65:
+                return make_report(eval_report, mark=4)
+            elif meta_ok >= 0.45:
+                return make_report(eval_report, mark=3)
+            elif meta_ok >= 0.25:
+                return make_report(eval_report, mark=2)
+            else:
+                return make_report(eval_report, mark=1)
+        elif predicted.get("is_decodable") is False and code:
+            return make_report(eval_report, mark=1, errors=["Correct refusal but decoder_code is not empty"])
+        else:
+            return make_report(eval_report, mark=0, errors=["False positive: model claimed sample is decodable but it is not"])
+    else:
+        return make_report(eval_report, mark=0, errors=["Expected sample is decodable but this function is for non-decodable cases only"])
+
+def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_output, ontology_path):
     """
     Mark synthesis of BLOB to JSON decoder.
 
@@ -104,7 +161,9 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
         return make_report(eval_report, mark=1, errors=["Invalid JSON output"])
 
     # evaluate field-level scores on decoder output
-    eval_report["field_scores"] = field_level_score(run_result["output"], expected_output)
+    ontology = load_ontology(ontology_path)
+    reverse_index = build_reverse_index(ontology)
+    eval_report["field_scores"] = field_level_score(run_result["output"], expected_output, reverse_index)
  
     # generalization score
     gen_score = 0.0
@@ -113,7 +172,7 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
         for sample in generalization_samples:
             r = run_decoder(code, sample["blob_hex"])
             if r["success"] and isinstance(r["output"], dict):
-                fs = field_level_score(r["output"], sample["expected_output"])
+                fs = field_level_score(r["output"], sample["expected_output"], reverse_index)
                 gen_results.append(0.2 * fs["field_f1"] + 0.8 * fs["value_accuracy"])
             else:
                 gen_results.append(0.0)
@@ -126,21 +185,7 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
     hallucinated = eval_report["field_scores"].get("hallucination_penalty", 0.0)
     meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
     composite = (0.05 * f1 + 0.8 * val_acc + 0.05 * gen_score + 0.05 * meta_ok + 0.05 * (1 - hallucinated))
-    # composite = (f1 + val_acc) / 2 
-    # if eval_report["generalization_score"] < 0.5:
-    #     if meta_ok < 0.5 and composite < 0.5:
-    #         return make_report(eval_report, mark=2)
-    #     elif meta_ok >= 0.5 and composite >= 0.5:
-    #         return make_report(eval_report, mark=4)
-    #     else:
-    #         return make_report(eval_report, mark=3)
-    # else:
-    #     if meta_ok < 0.5 and composite < 0.5:
-    #         return make_report(eval_report, mark=3)
-    #     elif meta_ok >= 0.5 and composite >= 0.5:
-    #         return make_report(eval_report, mark=5)
-    #     else:
-    #         return make_report(eval_report, mark=4)
+
     if composite >= 0.85:
         return make_report(eval_report, mark=5)
     elif composite >= 0.65:
@@ -263,35 +308,121 @@ except Exception as e:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-def field_level_score(predicted_output, expected_output):
+def match_field(predicted_key, expected_key, reverse_index):
     """
-    Returns precision, recall, f1, value_accuracy of the predicted output compared to the expected output.
+    Returns a score between 0 and 1 indicating how well the predicted field matches the expected field, using the reverse index for synonyms and weights.
     """
-    pred_keys = set(predicted_output.keys())
-    exp_keys = set(expected_output.keys())
-    common = pred_keys & exp_keys
+    # exact match
+    if predicted_key == expected_key:
+        return 1.0
 
-    precision = len(common) / len(pred_keys) if pred_keys else 0.0
-    recall = len(common) / len(exp_keys)  if exp_keys  else 0.0
+    # find canonical forms and weights 
+    pred_canonical, pred_weight = reverse_index.get(predicted_key, (predicted_key, 0.0))
+    exp_canonical, exp_weight   = reverse_index.get(expected_key,  (expected_key,  0.0))
+
+    if pred_canonical == exp_canonical:
+        return round(min(pred_weight, exp_weight), 4)
+
+    return 0.0
+
+def find_best_match(predicted_key, expected_keys, reverse_index, used):
+    """
+    Finds the best matching expected key for a given predicted key, using the reverse index and avoiding already used expected keys. Returns the best matching expected key and its score.
+    """
+    best_key, best_score = None, 0.0
+    for ek in expected_keys:
+        if ek in used:
+            continue
+        score = match_field(predicted_key, ek, reverse_index)
+        if score > best_score:
+            best_score = score
+            best_key = ek
+    return best_key, best_score
+
+# def field_level_score(predicted_output, expected_output):
+#     """
+#     Returns precision, recall, f1, value_accuracy of the predicted output compared to the expected output.
+#     """
+#     pred_keys = set(predicted_output.keys())
+#     exp_keys = set(expected_output.keys())
+#     common = pred_keys & exp_keys
+
+#     precision = len(common) / len(pred_keys) if pred_keys else 0.0
+#     recall = len(common) / len(exp_keys)  if exp_keys  else 0.0
+#     f1 = (2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0)
+#     # percentage of correctly predicted values among the expected keys, comparing values with semantic tolerance
+#     value_acc = (sum(1 for k in common if compare_json_values(predicted_output[k], expected_output[k])) / len(exp_keys) if exp_keys else 0.0)
+
+#     extra_keys = pred_keys - exp_keys
+#     hallucination_penalty = len(extra_keys) / (len(exp_keys) + len(extra_keys)) if (exp_keys or extra_keys) else 0.0
+
+#     return {
+#         "field_precision": round(precision, 4),
+#         "field_recall": round(recall, 4),
+#         "field_f1": round(f1, 4),
+#         "value_accuracy": round(value_acc, 4),
+#         "hallucination_penalty": round(hallucination_penalty, 4),
+#         "missing_keys": sorted(exp_keys - pred_keys),
+#         "extra_keys": sorted(pred_keys - exp_keys),
+#     }
+
+def field_level_score(predicted_output, expected_output, reverse_index):
+    pred_keys = list(predicted_output.keys())
+    exp_keys  = list(expected_output.keys())
+    exp_set   = set(exp_keys)
+
+    if not exp_keys:
+        return {
+            "field_precision": 0.0, "field_recall": 0.0,
+            "field_f1": 0.0, "value_accuracy": 0.0,
+            "hallucination_penalty": 0.0,
+            "missing_keys": [], "extra_keys": pred_keys,
+            "match_detail": [],
+        }
+
+    used_exp = set()
+    matches  = []
+
+    for pk in pred_keys:
+        best_ek, name_score = find_best_match(pk, exp_set, reverse_index, used_exp)
+        if name_score == 0.0:
+            matches.append((pk, None, 0.0, False))
+            continue
+
+        used_exp.add(best_ek)
+        value_ok = compare_json_values(predicted_output[pk], expected_output[best_ek])
+        matches.append((pk, best_ek, name_score, value_ok))
+
+
+    matched_exp = {ek for _, ek, score, _ in matches if ek and score > 0.0}
+    missing = sorted(set(exp_keys) - matched_exp)
+    extra = sorted(pk for pk, ek, score, _ in matches if ek is None or score == 0.0)
+
+    # fraction of predicted keys that matched expected keys (weighted by name score)
+    precision = (sum(s for _, _, s, _ in matches) / len(pred_keys) if pred_keys else 0.0)
+    # fraction of expected keys that were matched by predicted keys (weighted by name score)
+    recall = (sum(s for _, ek, s, _ in matches if ek is not None) / len(exp_keys)  if exp_keys else 0.0)
     f1 = (2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0)
-    # percentage of correctly predicted values among the expected keys, comparing values with semantic tolerance
-    value_acc = (sum(1 for k in common if compare_json_values(predicted_output[k], expected_output[k])) / len(exp_keys) if exp_keys else 0.0)
+    # fraction of expected keys that were matched and had correct values
+    value_accuracy = (sum(s for _, ek, s, v in matches if ek and v) / len(exp_keys) if exp_keys else 0.0)
+    # fraction of predicted keys that were not in expected keys
+    hallucination_penalty = (len(extra) / (len(exp_keys) + len(extra)) if (exp_keys or extra) else 0.0)
 
-    extra_keys = pred_keys - exp_keys
-    hallucination_penalty = len(extra_keys) / (len(exp_keys) + len(extra_keys)) if (exp_keys or extra_keys) else 0.0
-
+    exact_matches   = sum(1 for _, ek, s, _ in matches if ek and s == 1.0)
+    partial_matches = sum(1 for _, ek, s, _ in matches if ek and 0.0 < s < 1.0)
     return {
-        "field_precision": round(precision, 4),
-        "field_recall": round(recall, 4),
-        "field_f1": round(f1, 4),
-        "value_accuracy": round(value_acc, 4),
+        "field_precision":       round(precision, 4),
+        "field_recall":          round(recall, 4),
+        "field_f1":              round(f1, 4),
+        "value_accuracy":        round(value_accuracy, 4),
         "hallucination_penalty": round(hallucination_penalty, 4),
-        "missing_keys": sorted(exp_keys - pred_keys),
-        "extra_keys": sorted(pred_keys - exp_keys),
+        "exact_matches":         exact_matches,
+        "partial_matches":       partial_matches,
+        "missing_keys":          missing,
+        "extra_keys":            extra,
     }
 
-
-def mark_blob_to_json(answer, float_tol=1e-4):
+def mark_blob_to_json(answer, ontology_path, float_tol=1e-4):
     eval_report = {
         "field_scores": None,
         "mark": 0,
@@ -303,7 +434,9 @@ def mark_blob_to_json(answer, float_tol=1e-4):
     predicted = answer["predicted_json"] or {}
     expected  = answer["expected"] or {}
 
-    eval_report["field_scores"] = field_level_score(predicted, expected)
+    ontology = load_ontology(ontology_path)
+    reverse_index = build_reverse_index(ontology)
+    eval_report["field_scores"] = field_level_score(predicted, expected, reverse_index)
     fs = eval_report["field_scores"]
 
     composite = (0.8 * fs["value_accuracy"] + 0.1 * fs["field_f1"] + 0.1 * (1 - fs["hallucination_penalty"]))

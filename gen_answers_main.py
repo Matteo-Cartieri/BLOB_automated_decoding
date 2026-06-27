@@ -6,21 +6,22 @@ from transformers import AutoTokenizer
 
 ADAPTER_DIR = "./fine-tuned-models/fine-tuned-gemma/adapter"
 MODEL_NAME = "./models/gemma-3-4b-it" 
-RESULTS_FILE = "./results/gemma/base_gemma_3_results_ood.jsonl"
-MAX_SEQ_LEN = 7500
+RESULTS_FILE = "./results/gemma/ft_gemma_3_results_2.jsonl"
+MAX_SEQ_LEN = 7800
+MAX_NEW_TOKENS = 850
 
-test_data = load_jsonl("./data/lora/ood_test.jsonl")
+test_data = load_jsonl("./data/lora/test.jsonl")
 #model, tokenizer = load_fine_tuned_model(MODEL_NAME, ADAPTER_DIR)
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=False)
-test_data = [q for q in test_data if filter_questions(q, MAX_SEQ_LEN, 512, tokenizer)]
+test_data = [q for q in test_data if filter_questions(q, MAX_SEQ_LEN, MAX_NEW_TOKENS, tokenizer)]
 print(f"Test samples after length filter: {len(test_data)}")
 
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="dummy")
 
 with open(RESULTS_FILE, "w") as f:
     for i, question in enumerate(test_data):
-        answer_str = generate_answer_vllm(question, client, MODEL_NAME)
+        answer_str = generate_answer_vllm(question, client, "my-gemma", max_new_tokens=MAX_NEW_TOKENS)
 
         try:
             answer_json = json.loads(answer_str)
