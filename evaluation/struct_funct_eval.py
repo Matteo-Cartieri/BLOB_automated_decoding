@@ -35,6 +35,15 @@ def build_reverse_index(ontology):
                 index[synonym] = (canonical, weight)
     return index
 
+def is_empty_code(value) -> bool:
+    NO_CODE_STRINGS = {"", "none", "null", "n/a", "na", "not applicable", "no code", "no decoder",
+                       "not decodable", "unknown - likely encrypted or a custom format.",
+                       "none (likely encrypted or proprietary format)"}
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in NO_CODE_STRINGS
+
 def mark_decoder_synthesis_undecodable(answer):
     predicted = answer.get("predicted_json") or {}
     expected  = answer.get("expected") or {}
@@ -46,7 +55,7 @@ def mark_decoder_synthesis_undecodable(answer):
         "mark":                 0,
     }
     if not answer.get("parse_ok", False):
-        return make_report(eval_report, mark=0)
+        return make_report(eval_report, mark=0, errors=["Parsing failed for the answer"])
     
     # checks on metadata and classification
     eval_report["classification_ok"] = (predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower())
@@ -57,7 +66,7 @@ def mark_decoder_synthesis_undecodable(answer):
     code = predicted.get("decoder_code", "")
     if expected.get("is_decodable") is False:
         # if the expected sample is not decodable, check if the model identified it as non-decodable and predicted the expected fields
-        if predicted.get("is_decodable") is False and not code:
+        if predicted.get("is_decodable") is False and is_empty_code(code):
             meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
             if meta_ok >= 0.85:
                 return make_report(eval_report, mark=5)
@@ -69,14 +78,132 @@ def mark_decoder_synthesis_undecodable(answer):
                 return make_report(eval_report, mark=2)
             else:
                 return make_report(eval_report, mark=1)
-        elif predicted.get("is_decodable") is False and code:
+        elif predicted.get("is_decodable") is False and not is_empty_code(code):
             return make_report(eval_report, mark=1, errors=["Correct refusal but decoder_code is not empty"])
         else:
-            return make_report(eval_report, mark=0, errors=["False positive: model claimed sample is decodable but it is not"])
+            return make_report(eval_report, mark=0, errors=["Model claimed sample is decodable but it is not"])
     else:
         return make_report(eval_report, mark=0, errors=["Expected sample is decodable but this function is for non-decodable cases only"])
 
 def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_output, ontology_path):
+    """
+    Mark synthesis of BLOB to JSON decoder.
+
+    Marking scale:
+        0  no code generated or non-decodable
+        1  execution failed (code generated but crashes)
+        2  valid JSON output but incorrect fields
+        3  partially correct 
+        4  almost correct
+        5  correct, reusable decoder
+    """
+    predicted = answer.get("predicted_json") or {}
+    expected  = answer.get("expected") or {}
+
+    eval_report = {
+        "syntax_ok":            False,
+        "execution_ok":         False,
+        "valid_json_output":    False,
+        "hardcoded":            False,
+        "classification_ok":    False,
+        "expected_fields":      0.0,
+        "field_scores":         None,
+        "generalization_score": 0.0,
+        "errors":               [],
+        "mark":                 0,
+    }
+    
+    if not answer.get("parse_ok", False):
+        return make_report(eval_report, mark=0, errors=["Parsing failed for the answer"])
+    
+    # checks on metadata and classification
+    eval_report["classification_ok"] = (predicted.get("classification", "").strip().lower() == expected.get("classification", "").strip().lower())
+    eval_report["expected_fields"] = lists_similarity(predicted.get("expected_fields", []), expected.get("expected_fields", []))
+    
+    eval_report["decodable_ok"] = (predicted.get("is_decodable") == expected.get("is_decodable"))
+
+    code = predicted.get("decoder_code", "")
+    if expected.get("is_decodable") is False:
+        # if the expected sample is not decodable, check if the model identified it as non-decodable and predicted the expected fields
+        if predicted.get("is_decodable") is False and is_empty_code(code):
+            meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
+            if meta_ok >= 0.85:
+                return make_report(eval_report, mark=5)
+            elif meta_ok >= 0.65:
+                return make_report(eval_report, mark=4)
+            elif meta_ok >= 0.45:
+                return make_report(eval_report, mark=3)
+            elif meta_ok >= 0.25:
+                return make_report(eval_report, mark=2)
+            else:
+                return make_report(eval_report, mark=1)
+        elif predicted.get("is_decodable") is True:
+            return make_report(eval_report, mark=0, errors=["Model claimed sample is decodable but it is not"])
+
+    # if code is absent
+    if is_empty_code(code):
+        return make_report(eval_report, mark=0, errors=["The decoder_code field is empty"])
+    
+    # if code not syntactically valid
+    code = code.strip()
+    if not is_syntactically_valid(code):
+        return make_report(eval_report, mark=0, errors=["SyntaxError in generated code"])
+
+    eval_report["syntax_ok"] = True
+
+    # check for hardcoding patterns in the code
+    eval_report["hardcoded"] = is_hardcoded(code)
+    if eval_report["hardcoded"]:
+        return make_report(eval_report, mark=0, errors=["The code contains hardcoded values"])
+
+    # run the code and evaluate execution and output
+    run_result = run_decoder(code, blob_hex)
+    eval_report["execution_ok"] = run_result["success"]
+    eval_report["valid_json_output"] = run_result["success"] and isinstance(run_result["output"], dict)
+
+    # if code not executable
+    if not run_result["success"]:
+        return make_report(eval_report, mark=0, errors=[run_result["error"]])
+    
+    # if code executable but output not valid JSON
+    if run_result["success"] and not eval_report["valid_json_output"]:
+        return make_report(eval_report, mark=1, errors=["Invalid JSON output"])
+
+    # evaluate field-level scores on decoder output
+    ontology = load_ontology(ontology_path)
+    reverse_index = build_reverse_index(ontology)
+    eval_report["field_scores"] = field_level_score(run_result["output"], expected_output, reverse_index)
+ 
+    # generalization score
+    gen_score = 0.0
+    if generalization_samples:
+        gen_results = []
+        for sample in generalization_samples:
+            r = run_decoder(code, sample["blob_hex"])
+            if r["success"] and isinstance(r["output"], dict):
+                fs = field_level_score(r["output"], sample["expected_output"], reverse_index)
+                gen_results.append(0.2 * fs["field_f1"] + 0.8 * fs["value_accuracy"])
+            else:
+                gen_results.append(0.0)
+        gen_score = sum(gen_results) / len(gen_results)
+        eval_report["generalization_score"] = round(gen_score, 4)
+
+    # final score
+    f1 = eval_report["field_scores"].get("field_f1", 0.0)
+    val_acc = eval_report["field_scores"].get("value_accuracy", 0.0)
+    hallucinated = eval_report["field_scores"].get("hallucination_penalty", 0.0)
+    meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
+    composite = (0.05 * f1 + 0.8 * val_acc + 0.05 * gen_score + 0.05 * meta_ok + 0.05 * (1 - hallucinated))
+    if composite >= 0.85:
+        return make_report(eval_report, mark=5)
+    elif composite >= 0.65:
+        return make_report(eval_report, mark=4)
+    elif composite >= 0.45:
+        return make_report(eval_report, mark=3)
+    else:
+        return make_report(eval_report, mark=2)
+    
+def old_mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_output, ontology_path):
     """
     Mark synthesis of BLOB to JSON decoder.
 
@@ -129,8 +256,10 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
             else:
                 return make_report(eval_report, mark=1)
         elif predicted.get("is_decodable") is True:
-            return make_report(eval_report, mark=0, errors=["False positive: model claimed sample is decodable but it is not"])
-
+            return make_report(eval_report, mark=0, errors=["Model claimed sample is decodable but it is not"])
+        elif predicted.get("is_decodable") is False and code:
+            return make_report(eval_report, mark=0, errors=["Model claimed sample is not decodable but decoder_code is not empty"])
+        
     # if code is absent
     if not code:
         return make_report(eval_report, mark=0, errors=["The decoder_code field is empty"])
@@ -184,7 +313,7 @@ def mark_decoder_synthesis(answer, generalization_samples, blob_hex, expected_ou
     val_acc = eval_report["field_scores"].get("value_accuracy", 0.0)
     hallucinated = eval_report["field_scores"].get("hallucination_penalty", 0.0)
     meta_ok = (eval_report["classification_ok"] + eval_report["expected_fields"]) / 2
-    composite = (0.05 * f1 + 0.8 * val_acc + 0.05 * gen_score + 0.05 * meta_ok + 0.05 * (1 - hallucinated))
+    composite = (0.4 * f1 + 0.45 * val_acc + 0.05 * gen_score + 0.05 * meta_ok + 0.05 * (1 - hallucinated))
 
     if composite >= 0.85:
         return make_report(eval_report, mark=5)
@@ -256,7 +385,7 @@ import json, sys
 blob = bytes.fromhex("{blob_hex}")
 
 fn = None
-for fn_name in ("decode_payload", "decode_blob", "decode"):
+for fn_name in ("decode_payload", "decode_blob", "decode", "attempt_decode"):
     if fn_name in globals():
         fn = globals()[fn_name]
         break
@@ -296,8 +425,8 @@ except Exception as e:
         try:
             # check if output is valid JSON
             output = json.loads(proc.stdout.strip())
-            if isinstance(output, dict) and "__error__" in output:
-                return {"success": False, "output": None, "error": output["__error__"]}
+            if isinstance(output, dict) and "__error__" in output or "error" in output:
+                return {"success": False, "output": None, "error": output.get("__error__") or output.get("error")}
             return {"success": True, "output": output, "error": None}
         except json.JSONDecodeError:
             return {"success": False, "output": None, "error": f"Invalid JSON output: {proc.stdout[:200]}"}
@@ -440,6 +569,36 @@ def mark_blob_to_json(answer, ontology_path, float_tol=1e-4):
     fs = eval_report["field_scores"]
 
     composite = (0.8 * fs["value_accuracy"] + 0.1 * fs["field_f1"] + 0.1 * (1 - fs["hallucination_penalty"]))
+
+    if composite >= 0.85:
+        return make_report(eval_report, mark=5)
+    elif composite >= 0.65:
+        return make_report(eval_report, mark=4)
+    elif composite >= 0.45:
+        return make_report(eval_report, mark=3)
+    elif composite >= 0.25:
+        return make_report(eval_report, mark=2)
+    else:
+        return make_report(eval_report, mark=1)
+    
+def old_mark_blob_to_json(answer, ontology_path, float_tol=1e-4):
+    eval_report = {
+        "field_scores": None,
+        "mark": 0,
+    }
+
+    if not answer.get("parse_ok", False):
+        return make_report(eval_report, mark=0)
+
+    predicted = answer["predicted_json"] or {}
+    expected  = answer["expected"] or {}
+
+    ontology = load_ontology(ontology_path)
+    reverse_index = build_reverse_index(ontology)
+    eval_report["field_scores"] = field_level_score(predicted, expected, reverse_index)
+    fs = eval_report["field_scores"]
+
+    composite = (0.5 * fs["value_accuracy"] + 0.4 * fs["field_f1"] + 0.1 * (1 - fs["hallucination_penalty"]))
 
     if composite >= 0.85:
         return make_report(eval_report, mark=5)
