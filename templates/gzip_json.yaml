@@ -1,0 +1,23 @@
+template_id: gzip_json
+encoding_family: gzip_json
+short_description: gzip-compressed (RFC 1952) UTF-8 JSON payload
+typical_magic_bytes_or_signatures:
+  - "0x1F 0x8B"  # gzip magic number
+  - "0x1F 0x8B 0x08"  # gzip magic + deflate compression method byte
+required_python_libraries:
+  - gzip
+  - json
+minimal_decoder_snippet: |
+  import json
+  import gzip
+
+  def decode_blob(blob: bytes):
+      raw = gzip.decompress(blob)
+      return json.loads(raw.decode("utf-8"))
+expected_output_type: dict | list
+common_failure_conditions:
+  - missing or malformed gzip header (OSError: Not a gzipped file)
+  - CRC32 checksum mismatch on decompressed data
+  - concatenated/multi-member gzip stream handled incorrectly
+  - decompressed payload is not valid UTF-8
+  - decompressed payload is not valid JSON

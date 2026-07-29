@@ -1,0 +1,21 @@
+template_id: base64_json
+encoding_family: base64_json
+short_description: Base64-encoded (standard or URL-safe) UTF-8 JSON payload, no compression layer
+typical_magic_bytes_or_signatures:
+  - "printable ASCII charset restricted to [A-Za-z0-9+/=] (standard) or [A-Za-z0-9_-=] (URL-safe)"
+  - "often starts with 'ey' when decoding a JSON object, since '{\"' base64-encodes with that prefix"
+required_python_libraries: base64,json
+minimal_decoder_snippet: |
+  import base64
+  import json
+
+  def decode_blob(blob: bytes):
+      raw = base64.b64decode(blob)
+      return json.loads(raw.decode("utf-8"))
+expected_output_type: dict | list
+common_failure_conditions:
+  - incorrect padding ("Invalid base64-encoded string" / binascii.Error = Incorrect padding)
+  - standard vs URL-safe alphabet mismatch (+/ vs -_)
+  - decoded bytes are not valid UTF-8
+  - decoded payload is not valid JSON
+  - double base64 encoding not detected (decoded output is itself base64 text)

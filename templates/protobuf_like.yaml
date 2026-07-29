@@ -1,0 +1,23 @@
+template_id: protobuf_like
+encoding_family: protobuf_like
+short_description: Protocol Buffers-style varint/tag-length-value binary encoding, with or without a .proto schema available
+typical_magic_bytes_or_signatures:
+  - "no fixed magic; first byte is a varint tag combining field number and wire type (tag & 0x07 in {0,1,2,5})"
+  - "wire type 2 (length-delimited) fields followed by a varint length, common for embedded strings/messages"
+required_python_libraries:
+  - protobuf  # google.protobuf, only if a compiled schema (.proto -> _pb2.py) is available
+  - blackboxprotobuf  # alternative for schema-less/best-effort decoding
+minimal_decoder_snippet: |
+  # Schema-less best-effort decoding (no compiled .proto available)
+  import blackboxprotobuf
+
+  def decode_blob(blob: bytes):
+      message, typedef = blackboxprotobuf.decode_message(blob)
+      return message  # dict keyed by field number; typedef holds inferred wire types
+expected_output_type: dict (field_number -> value, when schema-less) | dict (named fields, when a compiled schema is used)
+common_failure_conditions:
+  - no .proto schema available, forcing lossy/best-effort field-number-only decoding
+  - ambiguous wire type 2 fields (could be string, bytes, or nested message) misinterpreted
+  - packed repeated fields not distinguished from a single length-delimited field
+  - varint decoding error on malformed or truncated input
+  - field numbers collide with unrelated encoding, causing false-positive "successful" decode with garbage data

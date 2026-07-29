@@ -1,0 +1,33 @@
+template_id: tlv_custom
+encoding_family: tlv_custom
+short_description: Custom Type-Length-Value binary framing, application-specific (no standard schema)
+typical_magic_bytes_or_signatures:
+  - "no universal magic; look for repeating fixed-size headers (e.g. 1-2 byte type + 2-4 byte length) followed by a value of matching size"
+  - "optional custom magic prefix defined by the specific protocol (e.g. 4-byte ASCII tag at offset 0)"
+required_python_libraries: struct
+minimal_decoder_snippet: |
+  import struct
+ 
+  def decode_blob(blob: bytes):
+      records = []
+      offset = 0
+      while offset < len(blob):
+          # Example framing: 1-byte type, 2-byte big-endian length, then value
+          if offset + 3 > len(blob):
+              break
+          tag = blob[offset]
+          length = struct.unpack_from(">H", blob, offset + 1)[0]
+          value_start = offset + 3
+          value_end = value_start + length
+          value = blob[value_start:value_end]
+          records.append((tag, value))
+          offset = value_end
+      return records
+expected_output_type: list[tuple[int, bytes]]  # caller typically maps tag -> semantic field afterward
+common_failure_conditions:
+  - assumed field widths (type/length sizes) do not match actual protocol (misaligned parsing)
+  - endianness mismatch (big-endian vs little-endian length fields)
+  - length field includes or excludes the TLV header itself, causing off-by-N offset errors
+  - nested/recursive TLV structures not handled
+  - truncated blob causes struct.error: unpack_from requires a buffer of at least N bytes
+  - no documented schema available, requiring reverse engineering before a reliable decoder can be written

@@ -1,0 +1,26 @@
+template_id: nskeyedarchiver_plist
+encoding_family: nskeyedarchiver_plist
+short_description: Apple property list (binary or XML), potentially wrapping an NSKeyedArchiver object graph
+typical_magic_bytes_or_signatures:
+  - "0x62 0x70 0x6C 0x69 0x73 0x74 0x30 0x30"  
+  - "bplist00"  
+  - 'XML plist header: starts with <?xml version=" ... followed by <!DOCTYPE plist'  # XML plist header
+  - "$archiver key present with value NSKeyedArchiver inside decoded plist dict"  # indicates keyed-archive payload
+required_python_libraries: plistlib
+minimal_decoder_snippet: |
+  import plistlib
+ 
+  def decode_blob(blob: bytes):
+      data = plistlib.loads(blob)
+      if isinstance(data, dict) and data.get("$archiver") == "NSKeyedArchiver":
+          # NSKeyedArchiver payloads store the real object graph under $objects/$top
+          # with internal UID references; plistlib does not resolve these automatically.
+          return data  # caller must walk $top/$objects manually or use a dedicated unarchiver
+      return data
+expected_output_type: dict | list | scalar (raw plist), or dict with $archiver/$objects/$top/$version keys (NSKeyedArchiver)
+common_failure_conditions:
+  - blob is not a valid plist (plistlib.InvalidFileException)
+  - NSKeyedArchiver internal UID/reference graph not resolved (plistlib gives raw structure only)
+  - custom NSCoding classes require class-specific logic to reconstruct objects
+  - binary plist version not supported by plistlib (rare, non-standard variants)
+  - mixing up XML plist parsing errors with binary plist parsing errors

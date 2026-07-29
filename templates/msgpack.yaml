@@ -1,0 +1,18 @@
+template_id: msgpack
+encoding_family: msgpack_blob
+short_description: MessagePack binary-serialized structured data (no separate compression layer)
+typical_magic_bytes_or_signatures:    
+  - "no fixed file-level magic; first byte encodes type (e.g. 0x80-0x8F fixmap, 0x90-0x9F fixarray, 0xA0-0xBF fixstr)"
+required_python_libraries: msgpack
+minimal_decoder_snippet: |
+  import msgpack
+
+  def decode_blob(blob: bytes):
+      return msgpack.unpackb(blob, raw=False, strict_map_key=False)
+expected_output_type: dict | list | scalar
+common_failure_conditions:
+  - missing msgpack library (pip install msgpack)
+  - raw=True/False mismatch causes bytes vs str key/value confusion
+  - use of non-standard ext types not registered via ext_hook
+  - truncated buffer raises msgpack.exceptions.OutOfData
+  - blob is actually another format misidentified as msgpack (no strong magic bytes to rely on)

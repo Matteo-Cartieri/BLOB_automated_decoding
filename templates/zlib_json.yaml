@@ -1,0 +1,23 @@
+template_id: zlib_json
+encoding_family: zlib_json
+short_description: zlib-compressed (DEFLATE, RFC 1950) UTF-8 JSON payload
+typical_magic_bytes_or_signatures:
+  - "0x78 0x9C"  # zlib default compression header
+  - "0x78 0x01"  # zlib no/low compression header
+  - "0x78 0xDA"  # zlib best compression header
+required_python_libraries: zlib, json
+minimal_decoder_snippet: |
+  import json
+  import zlib
+ 
+  def decode_blob(blob: bytes):
+      raw = zlib.decompress(blob)
+      return json.loads(raw.decode("utf-8"))
+expected_output_type: dict | list
+common_failure_conditions:
+  - blob is raw DEFLATE without zlib header/trailer (use zlib.decompressobj(-15) instead)
+  - incorrect wbits parameter causes "incorrect header check" error
+  - decompressed payload is not valid UTF-8
+  - decompressed payload is not valid JSON
+  - truncated or corrupted compressed stream (zlib.error: Error -5 while decompressing data)
+ 

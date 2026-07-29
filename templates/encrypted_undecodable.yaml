@@ -1,0 +1,18 @@
+template_id: encrypted_binary
+encoding_family: unknown_high_entropy
+short_description: Binary blob that does not match any known/recognizable format; likely encrypted, compressed with an unknown algorithm, or otherwise opaque/random data.
+typical_magic_bytes_or_signatures:
+  - "no recognizable magic number in the leading bytes"
+  - "high Shannon entropy (typically > 7.5 bits/byte over blocks of 256+ bytes)"
+  - "absence of repeating patterns or recognizable textual structures"
+  - "length often a multiple of common block sizes (8, 16, 32 bytes) if block-cipher encrypted (AES, etc.)"
+required_python_libraries: none (decoding not possible without key/algorithm)
+minimal_decoder_snippet: null
+expected_output_type: no recoverable payload without additional information (key, IV, algorithm, KDF); at most a classification/diagnostic dict, never actual decoded content
+common_failure_conditions:
+  - high entropy but data is not actually encrypted (e.g. already-compressed data with an unrecognized algorithm, or legitimately random binary data such as images/media)
+  - absence of visible IV or salt prevents even hypothesizing the encryption mode
+  - false positives, corrupted or headerless compressed blobs (zip, gzip without recognizable header) show entropy similar to encrypted blobs
+  - impossible to distinguish symmetric from asymmetric encryption from raw bytes alone
+  - non-block-aligned length does not rule out stream cipher encryption (RC4, ChaCha20, etc.)
+  - no decoder can be written for this template by design; any attempt to "decode" such a blob without key material would be fabrication, not decoding
